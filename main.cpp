@@ -1,8 +1,8 @@
-#include <cstddef>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <thread>
+#include <atomic>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -10,62 +10,48 @@
 #include <unistd.h>
 #include <portaudio.h>
 
-// Constantes unificadas (devem ser iguais no cliente!)
 #define PORTA_SINALIZACAO 5060
+#define PORTA_AUDIO       5061
+#define GRUPO_MULTICAST   "239.0.0.1"
 #define FRAMES_PER_BUFFER 960
-#define SAMPLE_RATE 48000
+#define SAMPLE_RATE       48000
 
 using namespace std;
 
-// --- POJOs ---
+// --- POJO ---
 class Chamada {
    private:
-    int id_call;
-    string origin;
-    string destination;
-    long timestamp_start;
-    unsigned char status;
-    int audio_port;
-
+    int id_call; string origin; string destination;
+    long timestamp_start; unsigned char status; int audio_port;
    public:
     Chamada() : id_call(0), timestamp_start(0), status(0), audio_port(0) {}
-    Chamada(int id, string origem, string destino, long timestamp, unsigned char stats, int porta_audio) {
-        id_call = id; origin = origem; destination = destino;
-        timestamp_start = timestamp; status = stats; audio_port = porta_audio;
-    }
-    void setId_call(int id) { id_call = id; }
-    int getId_call() { return id_call; }
-    void setOrigin(string origem) { origin = origem; }
-    string getOrigin() { return origin; }
-    void setDestination(string destino) { destination = destino; }
-    string getDestination() { return destination; }
-    void setTimestamp_start(long timestamp) { timestamp_start = timestamp; }
-    long getTimestamp_start() { return timestamp_start; }
-    void setStatus(unsigned char stats) { status = stats; }
-    unsigned char getStatus() { return status; }
-    void setAudio_port(int porta_audio) { audio_port = porta_audio; }
-    int getAudio_port() { return audio_port; }
+    void setId_call(int id)            { id_call = id; }
+    int getId_call()                   { return id_call; }
+    void setOrigin(string o)           { origin = o; }
+    string getOrigin()                 { return origin; }
+    void setDestination(string d)      { destination = d; }
+    string getDestination()            { return destination; }
+    void setTimestamp_start(long t)    { timestamp_start = t; }
+    long getTimestamp_start()          { return timestamp_start; }
+    void setStatus(unsigned char s)    { status = s; }
+    unsigned char getStatus()          { return status; }
+    void setAudio_port(int p)          { audio_port = p; }
+    int getAudio_port()                { return audio_port; }
 };
 
 // --- MARSHALLING ---
 class calloutputstream {
-   private:
-    ostream& destino;
-    Chamada* listaChamadas;
-    int qtdObjetos;
+    ostream& destino; Chamada* lista; int qtd;
    public:
-    calloutputstream(Chamada* lista, int quantidade, ostream& out)
-        : listaChamadas(lista), qtdObjetos(quantidade), destino(out) {}
+    calloutputstream(Chamada* l, int q, ostream& o) : lista(l), qtd(q), destino(o) {}
     void writeAll() {
-        for (int i = 0; i < qtdObjetos; i++) {
-            int id = listaChamadas[i].getId_call();
-            long ts = listaChamadas[i].getTimestamp_start();
-            string org = listaChamadas[i].getOrigin();
-            int tamOrg = org.size();
-            string dst = listaChamadas[i].getDestination();
-            int tamDst = dst.size();
-            unsigned char st = listaChamadas[i].getStatus();
-            int porta = listaChamadas[i].getAudio_port();
+        for (int i = 0; i < qtd; i++) {
+            int id = lista[i].getId_call();
+            long ts = lista[i].getTimestamp_start();
+            string org = lista[i].getOrigin(); int tamOrg = org.size();
+            string dst = lista[i].getDestination(); int tamDst = dst.size();
+            unsigned char st = lista[i].getStatus();
+            int porta = lista[i].getAudio_port();
             destino.write(reinterpret_cast<const char*>(&id), sizeof(id));
             destino.write(reinterpret_cast<const char*>(&ts), sizeof(ts));
             destino.write(reinterpret_cast<const char*>(&tamOrg), sizeof(tamOrg));
@@ -79,156 +65,161 @@ class calloutputstream {
 };
 
 class callinputstream {
-   private:
-    istream& origem;
-    Chamada* listaChamadas;
-    int qtdObjetos;
+    istream& origem; Chamada* lista; int qtd;
    public:
-    callinputstream(Chamada* lista, int quantidade, istream& in)
-        : listaChamadas(lista), qtdObjetos(quantidade), origem(in) {}
+    callinputstream(Chamada* l, int q, istream& i) : lista(l), qtd(q), origem(i) {}
     void readAll() {
-        for (int i = 0; i < qtdObjetos; i++) {
-            int id, tamOrg, tamDst, porta;
-            long ts;
-            unsigned char st;
+        for (int i = 0; i < qtd; i++) {
+            int id, tamOrg, tamDst, porta; long ts; unsigned char st;
             origem.read(reinterpret_cast<char*>(&id), sizeof(id));
             origem.read(reinterpret_cast<char*>(&ts), sizeof(ts));
             origem.read(reinterpret_cast<char*>(&tamOrg), sizeof(tamOrg));
-            string s_org; s_org.resize(tamOrg);
-            origem.read(&s_org[0], tamOrg);
+            string s_org; s_org.resize(tamOrg); origem.read(&s_org[0], tamOrg);
             origem.read(reinterpret_cast<char*>(&tamDst), sizeof(tamDst));
-            string s_dst; s_dst.resize(tamDst);
-            origem.read(&s_dst[0], tamDst);
+            string s_dst; s_dst.resize(tamDst); origem.read(&s_dst[0], tamDst);
             origem.read(reinterpret_cast<char*>(&st), sizeof(st));
             origem.read(reinterpret_cast<char*>(&porta), sizeof(porta));
-            listaChamadas[i].setId_call(id);
-            listaChamadas[i].setTimestamp_start(ts);
-            listaChamadas[i].setOrigin(s_org);
-            listaChamadas[i].setDestination(s_dst);
-            listaChamadas[i].setStatus(st);
-            listaChamadas[i].setAudio_port(porta);
+            lista[i].setId_call(id); lista[i].setTimestamp_start(ts);
+            lista[i].setOrigin(s_org); lista[i].setDestination(s_dst);
+            lista[i].setStatus(st); lista[i].setAudio_port(porta);
         }
     }
 };
 
-int main() {
-    // --- PORTAUDIO ---
-    PaError err = Pa_Initialize();
-    if (err != paNoError) {
-        cerr << "Erro ao inicializar PortAudio: " << Pa_GetErrorText(err) << endl;
-        return 1;
-    }
-
-    PaStream *stream;
-    err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, SAMPLE_RATE, FRAMES_PER_BUFFER, NULL, NULL);
-    if (err != paNoError) {
-        cerr << "Erro ao abrir stream: " << Pa_GetErrorText(err) << endl;
-        Pa_Terminate();
-        return 1;
-    }
-
-    // --- SOCKET ---
-    int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0) { perror("Erro socket"); Pa_Terminate(); return 1; }
+// --- THREAD: recebe áudio do grupo multicast e reproduz ---
+void threadReproducao(atomic<bool>& ativo) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { perror("[REPROD] socket"); return; }
 
     int opt = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    // FIX: define um timeout para o recvfrom não bloquear indefinidamente no loop de áudio
-    struct timeval tv;
-    tv.tv_sec = 5;
-    tv.tv_usec = 0;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    struct sockaddr_in serv_addr;
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(PORTA_SINALIZACAO);
-
-    if (bind(s, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Erro bind");
-        close(s);
-        Pa_Terminate();
-        return 1;
+    struct sockaddr_in addr;
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port        = htons(PORTA_AUDIO);
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("[REPROD] bind"); close(sock); return;
     }
 
-    cout << "--- SERVIDOR VOIP ATIVO ---" << endl;
-    cout << "Escutando na porta: " << PORTA_SINALIZACAO << endl;
+    struct ip_mreq mreq;
+    mreq.imr_multiaddr.s_addr = inet_addr(GRUPO_MULTICAST);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)) < 0) {
+        perror("[REPROD] IP_ADD_MEMBERSHIP"); close(sock); return;
+    }
+
+    PaStream* stream;
+    PaError err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, SAMPLE_RATE, FRAMES_PER_BUFFER, NULL, NULL);
+    if (err != paNoError) {
+        cerr << "[REPROD] " << Pa_GetErrorText(err) << endl;
+        close(sock); return;
+    }
+    Pa_StartStream(stream);
+
+    short buf[FRAMES_PER_BUFFER];
+    cout << "[REPROD] Ouvindo grupo multicast..." << endl;
+
+    while (ativo) {
+        struct sockaddr_in from; socklen_t len = sizeof(from);
+        int bytes = recvfrom(sock, (char*)buf, sizeof(buf), 0, (struct sockaddr*)&from, &len);
+        if (bytes > 0) Pa_WriteStream(stream, buf, FRAMES_PER_BUFFER);
+    }
+
+    Pa_StopStream(stream); Pa_CloseStream(stream); close(sock);
+}
+
+// --- THREAD: captura microfone e envia para o grupo multicast ---
+void threadCaptura(atomic<bool>& ativo) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { perror("[CAPTURA] socket"); return; }
+
+    struct sockaddr_in grupoAddr;
+    grupoAddr.sin_family      = AF_INET;
+    grupoAddr.sin_addr.s_addr = inet_addr(GRUPO_MULTICAST);
+    grupoAddr.sin_port        = htons(PORTA_AUDIO);
+
+    unsigned char ttl = 5;
+    setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+
+    unsigned char loop = 0;
+    setsockopt(sock, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+
+    PaStream* stream;
+    PaError err = Pa_OpenDefaultStream(&stream, 1, 0, paInt16, SAMPLE_RATE, FRAMES_PER_BUFFER, NULL, NULL);
+    if (err != paNoError) {
+        cerr << "[CAPTURA] " << Pa_GetErrorText(err) << endl;
+        close(sock); return;
+    }
+    Pa_StartStream(stream);
+
+    short buf[FRAMES_PER_BUFFER];
+    cout << "[CAPTURA] Transmitindo microfone para o grupo..." << endl;
+
+    while (ativo) {
+        Pa_ReadStream(stream, buf, FRAMES_PER_BUFFER);
+        sendto(sock, (char*)buf, sizeof(buf), 0, (struct sockaddr*)&grupoAddr, sizeof(grupoAddr));
+    }
+
+    Pa_StopStream(stream); Pa_CloseStream(stream); close(sock);
+}
+
+int main() {
+    Pa_Initialize();
+
+    int sSinal = socket(AF_INET, SOCK_DGRAM, 0);
+    int opt = 1;
+    setsockopt(sSinal, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in servAddr;
+    servAddr.sin_family      = AF_INET;
+    servAddr.sin_addr.s_addr = htonl(INADDR_ANY); // Escuta em todas as interfaces
+    servAddr.sin_port        = htons(PORTA_SINALIZACAO);
+    bind(sSinal, (struct sockaddr*)&servAddr, sizeof(servAddr));
+
+    cout << "--- SERVIDOR VOIP LOCAL ATIVO ---" << endl;
+    cout << "Aguardando chamadas na porta " << PORTA_SINALIZACAO << "..." << endl;
+
+    static atomic<bool> ativo(true);
+    static bool threadsIniciadas = false;
 
     while (true) {
         char buffer[2048];
+        struct sockaddr_in cliAddr; socklen_t clilen = sizeof(cliAddr);
 
-        // FIX: clilen DEVE ser reinicializado antes de cada recvfrom.
-        // Sem isso, após a primeira chamada o valor fica corrompido e
-        // os pacotes seguintes podem vir com endereço inválido.
-        struct sockaddr_in cli_addr;
-        socklen_t clilen = sizeof(cli_addr);
+        int n = recvfrom(sSinal, buffer, sizeof(buffer), 0, (struct sockaddr*)&cliAddr, &clilen);
+        if (n <= 0) continue;
 
-        int n = recvfrom(s, buffer, sizeof(buffer), 0, (struct sockaddr *)&cli_addr, &clilen);
+        stringstream ss_in(string(buffer, n));
+        Chamada recebida;
+        callinputstream inStream(&recebida, 1, ss_in);
+        inStream.readAll();
 
-        if (n > 0) {
-            // Unmarshalling da sinalização
-            stringstream ss_in(string(buffer, n));
-            Chamada recebida;
-            callinputstream inStream(&recebida, 1, ss_in);
-            inStream.readAll();
+        cout << "[SINALIZAÇÃO] Chamada de: " << recebida.getOrigin()
+             << " -> " << recebida.getDestination() << endl;
 
-            cout << "\n[SINALIZAÇÃO] INVITE de: " << recebida.getOrigin() << endl;
+        Chamada resposta;
+        resposta.setStatus(3);
+        resposta.setAudio_port(PORTA_AUDIO);
+        resposta.setDestination("LOCAL_GROUP");
 
-            // Aceitar chamada (status 3)
-            recebida.setStatus(3);
-            recebida.setAudio_port(PORTA_SINALIZACAO);
+        stringstream ss_out;
+        calloutputstream outStream(&resposta, 1, ss_out);
+        outStream.writeAll();
+        string s_resp = ss_out.str();
 
-            stringstream ss_out;
-            calloutputstream outStream(&recebida, 1, ss_out);
-            outStream.writeAll();
-            string resposta = ss_out.str();
+        sendto(sSinal, s_resp.c_str(), s_resp.size(), 0, (struct sockaddr*)&cliAddr, clilen);
+        cout << "[SINALIZAÇÃO] OK enviado para " << inet_ntoa(cliAddr.sin_addr) << endl;
 
-            sendto(s, resposta.c_str(), resposta.size(), 0, (struct sockaddr *)&cli_addr, clilen);
-            cout << "[RESPOSTA] OK enviado. Ligando os alto-falantes..." << endl;
-
-            Pa_StartStream(stream);
-
-            // --- LOOP DE ÁUDIO ---
-            short audioBuffer[FRAMES_PER_BUFFER];
-            int pacotesRecebidos = 0;
-            bool conversaAtiva = true;
-
-            while (conversaAtiva) {
-                // FIX: clilen deve ser reinicializado a cada iteração do loop de áudio
-                // para garantir que o endereço do cliente seja lido corretamente.
-                socklen_t audioCliLen = sizeof(cli_addr);
-
-                int bytesAudio = recvfrom(s, (char*)audioBuffer, sizeof(audioBuffer), 0,
-                                          (struct sockaddr *)&cli_addr, &audioCliLen);
-
-                if (bytesAudio > 0) {
-                    // Verifica se recebeu frames suficientes antes de escrever
-                    int framesRecebidos = bytesAudio / sizeof(short);
-                    if (framesRecebidos >= FRAMES_PER_BUFFER) {
-                        PaError writeErr = Pa_WriteStream(stream, audioBuffer, FRAMES_PER_BUFFER);
-                        if (writeErr != paNoError && writeErr != paOutputUnderflowed) {
-                            cerr << "[AUDIO] Erro Pa_WriteStream: " << Pa_GetErrorText(writeErr) << endl;
-                        }
-                    }
-
-                    pacotesRecebidos++;
-                    if (pacotesRecebidos % 100 == 0) {
-                        cout << "[AUDIO] Streaming ativo de " << recebida.getOrigin() << "..." << endl;
-                    }
-                } else {
-                    // bytesAudio <= 0: timeout ou erro — encerra a chamada
-                    conversaAtiva = false;
-                }
-            }
-
-            Pa_StopStream(stream);
-            cout << "[INFO] Chamada encerrada para " << recebida.getOrigin() << endl;
+        if (!threadsIniciadas) {
+            thread tReprod(threadReproducao, ref(ativo));
+            thread tCaptura(threadCaptura, ref(ativo));
+            tReprod.detach();
+            tCaptura.detach();
+            threadsIniciadas = true;
         }
     }
 
-    Pa_CloseStream(stream);
     Pa_Terminate();
-    close(s);
     return 0;
-}
+}   
