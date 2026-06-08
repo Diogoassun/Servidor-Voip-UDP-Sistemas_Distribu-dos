@@ -1,274 +1,382 @@
-# Projeto VoIP UDP - Sistemas Distribuídos
+# VoIP com Sinalização REST & Streaming Multicast FIFO
 
-**Aluno:** Diogo Bandeira Assunção e Leandro Rodrigues da Silva Júnior
-**Instituição:** UFC - Campus Quixadá
-**Tecnologias:** C++, UDP Sockets, PortAudio
+Sistema distribuído híbrido para comunicação de voz sobre IP (VoIP) em tempo real utilizando **Python (FastAPI)**, **C++**, **Node.js** e **UDP Multicast**.
 
----
+O projeto foi desenvolvido com foco em:
 
-##  Sumário
-
-* [Entrega 1](#-entrega-1)
-* [Entrega 2](#-entrega-2)
-* [Visão Geral](#1-visão-geral)
-* [Arquitetura do Sistema](#2-arquitetura-do-sistema)
-* [Modelagem Orientada a Objetos](#3-modelagem-orientada-a-objetos)
-* [Representação Externa de Dados](#4-representação-externa-de-dados-e-passagem-de-parâmetros)
-* [Compilação](#5-como-compilar-e-executar)
+* Desacoplamento espacial entre participantes
+* Interoperabilidade entre múltiplas linguagens
+* Separação entre plano de controle e plano de dados
+* Comunicação multicast escalável
+* Garantia de ordenação FIFO na camada de aplicação
 
 ---
 
-#  Entrega 1
+# Visão Geral
 
-<details>
-<summary><strong>Expandir conteúdo da Entrega 1</strong></summary>
+A arquitetura é dividida em dois planos independentes:
 
-## 1. Visão Geral
+## 1. Plano de Sinalização (Controle)
 
-Este projeto consiste na implementação de um sistema de comunicação de voz sobre IP (VoIP) utilizando o protocolo **UDP**. O sistema é composto por um Cliente e um Servidor que realizam uma etapa de sinalização (*handshake*) antes de iniciarem o fluxo de mídia em tempo real.
+Servidor REST desenvolvido em Python/FastAPI responsável por:
 
----
+* Registro de participantes
+* Criação de chamadas
+* Orquestração da sessão
+* Descoberta dos parâmetros de comunicação
 
-## 2. Arquitetura de Dados (POJO/POD)
-
-Para a representação das entidades de rede foram utilizadas classes no padrão **POD (Plain Old Data)**.
-
-### Estrutura principal: `Chamada`
-
-| Campo             | Descrição                        |
-| ----------------- | -------------------------------- |
-| `id_call`         | Identificador único da transação |
-| `origin`          | Usuário de origem                |
-| `destination`     | Usuário de destino               |
-| `timestamp_start` | Registro do início da chamada    |
-| `status`          | Controle do estado da chamada    |
-| `audio_port`      | Porta utilizada no streaming     |
-
----
-
-## 3. Serialização e Marshalling
-
-A comunicação entre processos foi implementada através de uma camada manual de **Marshalling**, utilizando as classes:
-
-* `calloutputstream`
-* `callinputstream`
-
-### Funções
-
-| Processo             | Função                                                   |
-| -------------------- | -------------------------------------------------------- |
-| Marshalling          | Converte objetos em formato binário                      |
-| Unmarshalling        | Reconstrói os objetos recebidos                          |
-| Manipulação de Bytes | Usa `unsigned char` para preservar integridade dos dados |
-
----
-
-## 4.  Processamento de Áudio (PortAudio)
-
-A captura e reprodução utilizam a biblioteca **PortAudio**, permitindo abstração do hardware e gerenciamento automático das interfaces de áudio.
-
-### Parâmetros Técnicos
-
-| Parâmetro         | Valor                  |
-| ----------------- | ---------------------- |
-| Sample Rate       | 44100 Hz               |
-| Frames per Buffer | 1024                   |
-| Formato           | PCM 16-bit (`paInt16`) |
-
----
-
-## 5.  Como Compilar e Executar
-
-### Pré-requisitos (Linux)
-
-```bash
-sudo apt install portaudio19-dev
-```
-
-</details>
-
----
-
-#  Entrega 2
-
-<details>
-<summary><strong>Expandir conteúdo da Entrega 2</strong></summary>
-
-## 1. Visão Geral
-
-Este relatório documenta o desenvolvimento do Trabalho 2 da disciplina de Sistemas Distribuídos, que consiste na reimplementação de um serviço de comunicação distribuída utilizando **Invocação Remota de Método (RMI)**.
-
-O sistema implementa um middleware proprietário operando sob um protocolo de requisição-resposta para gerenciamento do plano de controle de chamadas VoIP.
-
----
-
-## 2.  Arquitetura do Sistema
-
-A arquitetura foi dividida em duas camadas:
-
-### Middleware RMI
-
-Responsável por empacotamento e roteamento das mensagens.
-
-**Componentes:**
-
-* Cliente Stub (`doOperation`)
-* Servidor Skeleton (`getRequest`)
-* Resposta (`sendReply`)
-
-Pacote de comunicação:
+Comunicação:
 
 ```text
-messageType
-requestId
-objectReference
-methodId
-arguments
+HTTP/TCP
 ```
 
 ---
 
-### Camada de Aplicação
+## 2. Plano de Mídia (Dados)
 
-Responsável pela lógica de negócio:
+Fluxo contínuo de áudio transmitido diretamente entre os clientes utilizando:
 
-* gerenciamento de usuários
-* gerenciamento das sessões
-* controle dos dispositivos de áudio
+```text
+UDP Multicast
+```
 
----
-
-## 3.  Modelagem Orientada a Objetos
-
-### Entidades
-
-| Classe             | Função                   |
-| ------------------ | ------------------------ |
-| `DispositivoAudio` | Classe base de hardware  |
-| `Microfone`        | Captura de áudio         |
-| `AltoFalante`      | Reprodução de áudio      |
-| `Usuario`          | Representa participantes |
-| `SessaoVoIP`       | Gerencia chamadas        |
+O áudio não passa pelo servidor central.
 
 ---
 
-### Herança ("é-um")
+# Arquitetura
 
-| Relação                          |
-| -------------------------------- |
-| `Microfone → DispositivoAudio`   |
-| `AltoFalante → DispositivoAudio` |
+```text
+              +-----------------------------------+
+              |   SERVIDOR DE SINALIZAÇÃO (API)   |
+              |          Python / FastAPI         |
+              +-----------------------------------+
+                 ^                             ^
+                 | (POST /chamadas)            | (POST /chamadas)
+                 | HTTP/TCP                    | HTTP/TCP
+                 v                             v
+
++--------------------------------+             +----------------------------------+
+|  CLIENTE TRANSMISSOR (C++)     |             |    CLIENTE OUVINTE (Node.js)     |
+|                                |             |                                  |
+|  - Captura Mic via PortAudio   |             |  - Reprodução via Speaker        |
+|  - Injeta Sequência FIFO       |             |  - Validação FIFO                |
++--------------------------------+             +----------------------------------+
+
+                    ^
+                    |
+                    |
++---------------------------------------------------------------+
+|            UDP MULTICAST (239.0.0.1)                          |
+|                                                               |
+|             Áudio PCM + Cabeçalho FIFO                        |
++---------------------------------------------------------------+
+```
 
 ---
 
-### Agregação ("tem-um")
+# Protocolo FIFO na Camada de Aplicação
 
-| Relação                             |
-| ----------------------------------- |
-| `Usuario possui Microfone`          |
-| `Usuario possui AltoFalante`        |
-| `SessaoVoIP possui Usuario origem`  |
-| `SessaoVoIP possui Usuario destino` |
+O transporte UDP não oferece:
+
+* Garantia de entrega
+* Garantia de ordenação
+* Garantia contra duplicação
+
+Para resolver isso foi criado um cabeçalho de aplicação de 4 bytes.
 
 ---
 
-## Métodos Remotos
+## Estrutura do Pacote
+
+```text
+Posição:
+
+[ Byte 0 ] [ Byte 1 ] [ Byte 2 ] [ Byte 3 ]
+[ Byte 4 ................................ Byte 1923 ]
+
++-----------------------------------------+
+|      Número de Sequência FIFO           |
+|      (uint32_t / 4 bytes)               |
++-----------------------------------------+
+
++-----------------------------------------+
+|          Dados de Áudio PCM             |
+|        16 bits / 1920 bytes             |
++-----------------------------------------+
+```
+
+---
+
+## Estrutura Lógica
+
+```text
++=========================================+
+|          CÓDIGO DE CONTROLE             |
++=========================================+
+
++=========================================+
+|               PAYLOAD                   |
++=========================================+
+```
+
+---
+
+# Funcionamento do Transmissor (C++)
+
+Cada pacote recebe um identificador sequencial.
+
+Exemplo:
 
 ```cpp
-iniciarChamada(origem_dict, destino_dict)
-
-encerrarChamada(sessaoId)
-
-consultarParticipantes(sessaoId)
-
-pingServidor()
+std::memcpy(pacote, &seq_network, 4);
 ```
 
----
-
-## 4. Representação Externa de Dados e Passagem de Parâmetros
-
-A serialização das mensagens do protocolo RMI foi implementada utilizando a biblioteca nativa `json`.
-
-Os objetos são convertidos em dicionários (`to_dict()`) antes da serialização para transmissão.
-
-Estrutura transportada:
+O pacote é então enviado ao grupo multicast:
 
 ```text
-messageType
-requestId
-objectReference
-methodId
-arguments
+239.0.0.1
 ```
 
 ---
 
-## 5. Justificativa Técnica
+# Funcionamento do Receptor (Node.js)
 
-<details>
-<summary>Ver explicação detalhada</summary>
+Ao receber um pacote:
 
-### 1. Sockets na Construção do Middleware
+```javascript
+const seq = msg.readUInt32BE(0);
+```
 
-A exigência do trabalho busca ocultar detalhes de rede da camada de aplicação.
-
-Como o middleware RMI foi construído manualmente, a utilização de sockets torna-se necessária para transportar mensagens serializadas entre os processos.
-
-A aplicação em si não manipula sockets diretamente; ela apenas invoca métodos remotos.
+O número de sequência é comparado com o valor esperado.
 
 ---
 
-### 2. Sockets no Plano de Dados (Streaming de Áudio)
+## Caso 1 — Pacote Correto
 
-Foi adotada uma arquitetura híbrida:
+```text
+seq_recebida == seq_esperada
+```
 
-| Plano    | Tecnologia     |
-| -------- | -------------- |
-| Controle | Middleware RMI |
-| Dados    | UDP Multicast  |
+Resultado:
 
----
+```text
+[FIFO OK]
+```
 
-#### Justificativa
+O áudio é entregue imediatamente ao dispositivo de saída.
 
-RMI opera de forma síncrona e bloqueante.
-
-O envio contínuo de buffers de áudio por chamadas remotas sucessivas introduziria:
-
-* aumento de latência
-* overhead de serialização
-* jitter elevado
-* degradação do tempo real
-
-Por esse motivo, a mídia utiliza **UDP Multicast**, enquanto a sinalização permanece sob responsabilidade do middleware RMI.
-
-</details>
-
-</details>
+```javascript
+altoFalante.write(audioBuffer);
+```
 
 ---
 
-##  Execução
+## Caso 2 — Perda de Pacotes
 
-### Dependências
+```text
+seq_recebida > seq_esperada
+```
+
+Resultado:
+
+```text
+[FIFO GAP]
+```
+
+O receptor detecta perda física de pacotes.
+
+Para preservar o comportamento em tempo real, o fluxo continua a partir do pacote mais recente.
+
+---
+
+## Caso 3 — Pacote Atrasado ou Duplicado
+
+```text
+seq_recebida < seq_esperada
+```
+
+Resultado:
+
+```text
+[FIFO REJEITADO]
+```
+
+O pacote é descartado imediatamente.
+
+Isso evita:
+
+* Eco
+* Repetição de áudio
+* Distorções
+* Artefatos acústicos
+
+---
+
+# Propriedades de Comunicação Indireta
+
+## Desacoplamento Espacial
+
+O transmissor não conhece:
+
+* Endereço IP dos ouvintes
+* Quantidade de ouvintes
+* Localização dos ouvintes
+
+Ele apenas envia para:
+
+```text
+239.0.0.1
+```
+
+Qualquer novo cliente que execute:
+
+```javascript
+socket.addMembership("239.0.0.1");
+```
+
+passará a receber o fluxo instantaneamente.
+
+---
+
+## Isolamento do Servidor
+
+O servidor REST nunca manipula os dados de áudio.
+
+Sua responsabilidade limita-se à sinalização.
+
+Consequentemente:
+
+* Menor carga computacional
+* Menor uso de banda
+* Escalabilidade superior
+* Separação clara de responsabilidades
+
+---
+
+# Pré-requisitos
+
+## macOS
+
+Instalar PortAudio:
 
 ```bash
-sudo apt install portaudio19-dev
+brew install portaudio
 ```
 
-### Compilação
+---
+
+## Python (Servidor)
+
+Instalar dependências:
 
 ```bash
-g++ servidor.cpp -o servidor -lportaudio
-
-g++ cliente.cpp -o cliente -lportaudio
+pip install fastapi uvicorn pydantic
 ```
 
-### Execução
+---
+
+## Node.js (Ouvinte)
+
+Instalar dependências:
 
 ```bash
-./servidor
-
-./cliente
+npm install speaker
 ```
+
+---
+
+# Execução do Sistema
+
+Abra três terminais.
+
+---
+
+## Iniciar Servidor de Sinalização
+
+```bash
+python3 servidor.py
+```
+
+---
+
+## Iniciar Cliente Ouvinte
+
+```bash
+node cliente_ouvinte.js
+```
+
+---
+
+## Compilar Cliente Transmissor
+
+```bash
+g++ -std=c++11 cliente_transmissor.cpp \
+-o cliente_transmissor \
+-I/opt/homebrew/include \
+-L/opt/homebrew/lib \
+-lcurl \
+-lportaudio
+```
+
+---
+
+## Executar o Transmissor
+
+```bash
+./cliente_transmissor
+```
+
+---
+
+# Exemplo de Logs
+
+```text
+[FIFO OK] Pacote 120
+[FIFO OK] Pacote 121
+[FIFO OK] Pacote 122
+
+[FIFO GAP] Esperado 123 Recebido 126
+
+[FIFO OK] Pacote 127
+
+[FIFO REJEITADO] Pacote atrasado 124
+```
+
+---
+
+# Objetivos Acadêmicos Demonstrados
+
+Este projeto demonstra na prática:
+
+* Comunicação distribuída
+* Sistemas multicast
+* Comunicação indireta
+* Desacoplamento espacial
+* Protocolos de aplicação
+* VoIP em tempo real
+* Tolerância a perdas UDP
+* Garantia FIFO em camada de aplicação
+* Interoperabilidade entre C++, Python e Node.js
+
+---
+
+# Tecnologias Utilizadas
+
+| Tecnologia    | Função                         |
+| ------------- | ------------------------------ |
+| C++           | Captura e transmissão de áudio |
+| PortAudio     | Interface com microfone        |
+| Node.js       | Recepção e reprodução          |
+| Speaker       | Saída de áudio                 |
+| Python        | Sinalização                    |
+| FastAPI       | API REST                       |
+| UDP Multicast | Transporte de mídia            |
+| HTTP/TCP      | Controle da sessão             |
+
+---
+
+# Autor
+
+Projeto acadêmico de Sistemas Distribuídos demonstrando a separação entre plano de controle e plano de dados em um sistema VoIP multicast com garantia FIFO implementada na camada de aplicação.
